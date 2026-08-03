@@ -1,0 +1,1414 @@
+---
+title: "FI JCI Insight Analyses"
+author: "Akshay Bareja"
+date: "`r Sys.Date()`"
+toc: true
+number-sections: true
+self-contained: true
+format: 
+  revealjs: default
+  html:
+    df-print: paged
+    code-fold: true
+    code-tools: true
+  pdf: 
+    code-line-numbers: true
+editor: source
+---
+
+```{r}
+#| label: load-packages
+#| include: false
+
+library(tidyverse)
+library(readxl)
+library(mmrm)
+library(emmeans)
+library(tern.mmrm)
+library(Rfit)
+library(limma)
+library(ggforce)
+library(ggrepel)
+library(DT)
+library(gt)
+library(ggsignif)
+library(patchwork)
+library(ggprism)
+library(performance)
+library(gtsummary)
+library(openxlsx)
+```
+
+::: callout-note
+## This document contains code and results for the full re-analysis of some of the experiments presented in the manuscript "Food insecurity in young rats induces cardiometabolic disease phenotypes in a sex and diet-dependent manner".
+:::
+
+## Figure 1
+
+Fit MMRM models of the same type to each of Figure 1B-F and return results as a concatenated data frame of only fdr-corrected statistically significant contrasts (using a Benjamini-Hochberg adjusted p-value threshold of 0.05)
+
+```{r}
+#| label: fig1
+#| message: false
+#| warning: false
+#| cache: true
+
+# function that imports data + runs mmrm
+# fits both ar1 and ar1h and picks the model with the smaller AIC
+# Note: I am controlling for baseline as described in - https://opensource.nibr.com/bamdd/src/02h_mmrm.html#implementation
+fig1_fun <- function(path,
+         sheet_name
+){
+  
+  df <- read_excel(path, 
+                   sheet = sheet_name, 
+                   skip = 2) |> 
+    janitor::clean_names() |> 
+    tidyr::pivot_longer(
+      cols = -day,
+      names_to = c("group", "id"),
+      names_pattern = "(.+)_._.+_(\\d+)",
+      values_to = "val"
+    ) |> 
+    dplyr::mutate(
+      group = factor(group),
+      day = factor(day)
+    ) |> 
+    dplyr::filter(!if_all(
+    .cols = c(group, id, val),
+    .fns = is.na
+  )) # remove rows that have NAs in all these columns. Included to handle some "edge" files (e.g. the Supplemental Figure 1 data)
+  
+  # pull out day 1 data
+  df_base <- df |> 
+      dplyr::filter(day == 1) |> 
+      dplyr::select(id, val) |> 
+      dplyr::rename(
+        base = val
+      )
+  
+  # join with original df
+  df_mmrm <- df |> 
+    dplyr::filter(day != 1) |>
+    dplyr::inner_join(
+      df_base,
+      join_by(id)
+    ) |> 
+    dplyr::mutate(
+      id = factor(id),
+      day = factor(day,
+                   levels = 2:max(as.numeric(levels(unique(df$day))))),
+      group = factor(group,
+                     levels = c("fi", "al"))
+    )
+  
+  # fit with ar1
+  mmrm_ar1_res <- mmrm(
+    formula = val ~ group + day + base + day:group + day:base + ar1(day | id),
+    data = df_mmrm
+  )
+  
+  ar1_obj <- summary(mmrm_ar1_res)
+  
+  # fit with ar1h
+  mmrm_ar1h_res <- mmrm(
+    formula = val ~ group + day + base + day:group + day:base + ar1h(day | id),
+    data = df_mmrm
+  )
+  
+  ar1h_obj <- summary(mmrm_ar1h_res)
+  
+  if(ar1_obj$aic_list$AIC < ar1h_obj$aic_list$AIC){
+    
+    mmrm_res <- mmrm_ar1_res
+    
+  } else {
+    
+    mmrm_res <- mmrm_ar1h_res
+    
+  } # pick model with lower AIC
+  
+  if(ar1_obj$aic_list$AIC < ar1h_obj$aic_list$AIC){
+    
+    cov_type <- "ar1"
+    
+  } else {
+    
+    cov_type <- "ar1h"
+    
+  } 
+  
+  mmrm_fit_emm <- emmeans(mmrm_res, 
+                          ~ group | day, 
+                          lmer.df = "kenward-roger", 
+                          weights = "proportional")
+  mmrm_fit_contrasts <- contrast(mmrm_fit_emm, 
+                                 adjust = "none", 
+                                 method = "trt.vs.ctrl", 
+                                 ref = 1)
+  
+  final_res <- data.frame(mmrm_fit_contrasts)  |>  
+                as_tibble() |> 
+                dplyr::mutate(adj.p.val = p.adjust(p.value, "BH")) |>
+                dplyr::filter(adj.p.val < 0.05) |> # only keep adjusted p-values < 0.05
+                dplyr::mutate(figure = {{ sheet_name }}) |> 
+                dplyr::select(figure, contrast, day, p.value, adj.p.val)
+  
+  final_res$cov_type <- cov_type
+  
+  return(final_res)
+  
+}
+
+# test on one sheet
+# fig1_fun(
+#   path = "data/Master Data final 08032026.xlsx",
+#   sheet_name = "Fig 1B"
+# )
+
+# Apply to all sheets
+fig1_res_df <- purrr::map(
+  .x = c("Fig 1B", "Fig 1C", "Fig 1D", "Fig 1E", "Fig 1F", "Fig 1G", "Fig 1H", "Fig 1I"),
+  .f = \(x){
+    
+    fig1_fun("data/Master Data final 08032026.xlsx",
+             sheet_name = x)
+    
+  }
+) |> 
+  purrr::list_rbind()
+
+# display full results
+fig1_res_df |> 
+  dplyr::mutate(p.value = round(p.value, 2),
+                adj.p.val = round(adj.p.val, 2)) |> 
+  DT::datatable(
+    caption = "Figure 1 signficant results (full)"
+  )
+
+# number of statistically significant results for each comparison
+fig1_res_df |> 
+  dplyr::count(figure) |> 
+  dplyr::rename(num_sig_results = n) |> 
+  gt::gt() |> 
+  gt::tab_header(
+    title = "Number of comparisons with adjusted p-value < 0.05"
+  )
+```
+
+## Supplemental Figure 1
+
+Apply `fig1_fun` to Supplemental Figure 1C-D.
+
+```{r}
+#| label: supp-fig1
+#| message: false
+#| warning: false
+#| cache: true
+
+# Apply to all sheets
+supp_fig1_res_df <- purrr::map(
+  .x = c("S. Fig 1C", "S. Fig 1E", "S.Fig 1F"), # need to treat S. Fig 1D separately
+  .f = \(x){
+    
+    fig1_fun("data/Master Data final 08032026.xlsx",
+             sheet_name = x)
+    
+  }
+) |> 
+  purrr::list_rbind()
+
+# Analyze S. Fig 1D separately
+supp_fig1d_df <- read_excel("data/Master Data final 08032026.xlsx", 
+                   sheet = "S. Fig 1D", 
+                   skip = 1) |> 
+    janitor::clean_names() |> 
+    dplyr::select(day:last_col()) |> 
+    tidyr::pivot_longer(
+      cols = -day,
+      names_to = c("group", "id"),
+      names_pattern = "(.+)_._.+_(\\d+)",
+      values_to = "val"
+    ) |> 
+    dplyr::mutate(
+      group = factor(group),
+      day = factor(day)
+    )
+
+# pull out day 1 data
+supp_fig1d_df_base <- supp_fig1d_df |> 
+  dplyr::filter(day == 1) |> 
+  dplyr::select(id, val) |> 
+  dplyr::rename(
+    base = val
+  )
+
+# join with original df
+supp_fig1d_df_mmrm <- supp_fig1d_df |> 
+  dplyr::filter(day != 1) |>
+  dplyr::inner_join(
+    supp_fig1d_df_base,
+    join_by(id)
+  ) |> 
+  dplyr::mutate(
+    id = factor(id),
+    day = factor(day,
+                 levels = 2:max(as.numeric(levels(unique(supp_fig1d_df$day))))),
+    group = factor(group,
+                   levels = c("fi", "al"))
+  )
+
+# fit with ar1
+supp_fig1d_mmrm_ar1_res <- mmrm(
+  formula = val ~ group + day + base + day:group + day:base + ar1(day | id),
+  data = supp_fig1d_df_mmrm
+)
+
+supp_fig1d_ar1_obj <- summary(supp_fig1d_mmrm_ar1_res)
+
+# fit with ar1h
+supp_fig1d_mmrm_ar1h_res <- mmrm(
+  formula = val ~ group + day + base + day:group + day:base + ar1h(day | id),
+  data = supp_fig1d_df_mmrm
+)
+
+supp_fig1d_ar1h_obj <- summary(supp_fig1d_mmrm_ar1h_res)
+
+if(supp_fig1d_ar1_obj$aic_list$AIC < supp_fig1d_ar1h_obj$aic_list$AIC){
+  
+  supp_fig1d_mmrm_res <- supp_fig1d_mmrm_ar1_res
+  
+} else {
+  
+  supp_fig1d_mmrm_res <- supp_fig1d_mmrm_ar1h_res
+  
+} # pick model with lower AIC
+
+if(supp_fig1d_ar1_obj$aic_list$AIC < supp_fig1d_ar1h_obj$aic_list$AIC){
+  
+  supp_fig1d_cov_type <- "ar1"
+  
+} else {
+  
+  supp_fig1d_cov_type <- "ar1h"
+  
+}
+
+supp_fig1d_mmrm_fit_emm <- emmeans(supp_fig1d_mmrm_res, 
+                        ~ group | day, 
+                        lmer.df = "kenward-roger", 
+                        weights = "proportional")
+supp_fig1d_mmrm_fit_contrasts <- contrast(supp_fig1d_mmrm_fit_emm, 
+                               adjust = "none", 
+                               method = "trt.vs.ctrl", 
+                               ref = 1)
+
+supp_fig1d_final_res <- data.frame(supp_fig1d_mmrm_fit_contrasts)  |>  
+  as_tibble() |> 
+  dplyr::mutate(adj.p.val = p.adjust(p.value, "BH")) |>
+  dplyr::filter(adj.p.val < 0.05) |> # only keep adjusted p-values < 0.05
+  dplyr::mutate(figure = "S. Fig 1D") |> 
+  dplyr::select(figure, contrast, day, p.value, adj.p.val)
+
+supp_fig1d_final_res$cov_type <- supp_fig1d_cov_type
+
+# Combine with supp_fig1_res_df
+supp_fig1_res_df_full <- supp_fig1_res_df |> 
+                          dplyr::bind_rows(supp_fig1d_final_res)
+
+# display full results
+supp_fig1_res_df_full |> 
+  dplyr::mutate(p.value = round(p.value, 2),
+                adj.p.val = round(adj.p.val, 2)) |>
+  DT::datatable(
+    caption = "Supp. Figure 1 significant results (full)"
+  )
+
+# number of statistically significant results for each comparison
+supp_fig1_res_df_full |> 
+  dplyr::count(figure) |> 
+  dplyr::rename(num_sig_results = n) |> 
+  gt::gt() |> 
+  gt::tab_header(
+    title = "Number of comparisons with adjusted p-value < 0.05"
+  )
+```
+
+## Figure 3
+
+```{r}
+#| label: fig3
+#| message: false
+#| warning: false
+#| cache: true
+
+## Box-and-violin plots
+# function that performs t-test and produces p-value and figure name
+fig3_stats_fun <- function(path,
+         sheet_name){
+  
+  df <- read_excel(path, 
+             sheet = sheet_name, skip = 2) |> 
+    janitor::clean_names() |> 
+    dplyr::select(hour:starts_with("x")) |> 
+    dplyr::select(-starts_with("x"))
+  
+  # compute means
+  df_means <- df |> 
+    dplyr::summarise(
+      across(
+        .cols = matches("\\d$"),
+        .fns = list(mean = ~mean(.x, na.rm = TRUE)),
+        .names = "{.fn}_{.col}"
+      )
+    ) |> 
+    tidyr::pivot_longer(
+      cols = everything(),
+      names_to = c("group", "sex", "diet", "id"),
+      names_pattern = "mean_(.+)_(.)_(.+)_(\\d+)",
+      values_to = "val"
+    )
+  
+  # stats test
+  p_val <- t.test(
+    df_means |>
+      dplyr::filter(group == "al") |>
+      dplyr::pull(val),
+    df_means |>
+      dplyr::filter(group == "fi") |>
+      dplyr::pull(val)
+  )$p.value
+  
+  # return result
+  res_df <- tibble::tibble(
+    figure = {{ sheet_name }},
+    p_value = p_val
+  )
+  
+  return(res_df)
+  
+}
+
+# test
+# fig3_stats_fun(
+#   "data/Master Data final 08032026.xlsx",
+#   sheet_name = "Fig 3A-B"
+# )
+
+# Apply to all sheets
+fig3_res_df <- purrr::map(
+  .x = c("Fig 3A-B", "Fig 3C-D", "Fig 3H-I", "Fig 3J-K", "Fig 3 L-M", "Fig 3N-O", "Fig 3P-Q", "Fig 3 R-S"), 
+  .f = \(x){
+    
+    fig3_stats_fun("data/Master Data final 08032026.xlsx",
+                    sheet_name = x)
+    
+  }
+) |> 
+  purrr::list_rbind()
+
+fig3_res_df
+
+# plots
+# function for making box/violin plots with stats info
+fig3_plots_fun <- function(path,
+                               sheet_name){
+  
+  df <- read_excel(path, 
+                   sheet = sheet_name, skip = 2) |> 
+    janitor::clean_names() |> 
+    dplyr::select(hour:starts_with("x")) |> 
+    dplyr::select(-starts_with("x"))
+  
+  # compute means
+  df_means <- df |> 
+    dplyr::summarise(
+      across(
+        .cols = matches("\\d$"),
+        .fns = list(mean = ~mean(.x, na.rm = TRUE)),
+        .names = "{.fn}_{.col}"
+      )
+    ) |> 
+    tidyr::pivot_longer(
+      cols = everything(),
+      names_to = c("group", "sex", "diet", "id"),
+      names_pattern = "mean_(.+)_(.)_(.+)_(\\d+)",
+      values_to = "val"
+    )
+  
+  # get y-axis title
+  column_names <- read_excel(path, 
+                             sheet = sheet_name, skip = 1) |> 
+                      colnames()
+  
+  y_axis_title <- column_names[1]
+  
+  # get Male/Female info
+  mf_info <- read_excel(path, 
+                        sheet = sheet_name, skip = 2) |> 
+    janitor::clean_names() |> 
+    dplyr::select(hour:starts_with("x")) |> 
+    dplyr::select(-starts_with("x")) |> 
+    dplyr::select(last_col()) |> 
+    dplyr::rename_with(
+      .fn = ~str_extract(.x, "(?<=\\w_).(?=_\\w)")
+    ) |> 
+    colnames()
+  mf_info <- str_to_upper(mf_info)
+  
+  # plot
+  df_means |> 
+    ggplot(aes(group, val)) +
+    geom_violin(width = 0.5,
+                linewidth = 1.5) +
+    geom_boxplot(width = 0.15, 
+                 alpha=0.2,
+                 linewidth = 1.5) +
+    theme_prism() +
+    labs(title = {{ sheet_name }},
+         y = y_axis_title,
+         x = "") +
+    scale_x_discrete(labels = 
+                       c(paste0("AL ", mf_info),
+                         paste0("FI ", mf_info))
+                     ) +
+    theme(axis.text = element_text(face = "bold",
+                                   size = 20),
+          axis.title = element_text(size = 25),
+          axis.title.y = element_text(size = 10,
+                                      vjust = 5))
+  
+}
+
+# test
+# fig3_plots_fun(
+#   "data/Master Data final 08032026.xlsx",
+#   sheet_name = "Fig 3A-B"
+# )
+
+# make all plots
+purrr::map(
+  .x = c("Fig 3A-B", "Fig 3C-D", "Fig 3H-I", "Fig 3J-K", "Fig 3 L-M", "Fig 3N-O", "Fig 3P-Q", "Fig 3 R-S"),
+  .f = \(x){
+
+    fig3_plots_fun("data/Master Data final 08032026.xlsx",
+                    sheet_name = x)
+
+  }
+)
+
+# save plots as individual figures
+# purrr::map(
+#   .x = c("Fig 3A-B", "Fig 3C-D", "Fig 3H-I", "Fig 3J-K", "Fig 3 L-M", "Fig 3N-O", "Fig 3P-Q", "Fig 3 R-S"),
+#   .f = \(x){
+# 
+#     plot <- fig3_plots_fun("data/Master Data final 08032026.xlsx",
+#                             sheet_name = x) +
+#               labs(title = "")
+# 
+#     ggsave(paste0("figures/Figure 3/",
+#                   "Fig 3",
+#                   str_extract(x, "(?<=\\-)."),
+#                   ".tiff"),
+#            plot,
+#            height = 5,
+#            width = 3
+#            )
+# 
+#   }
+# )
+
+```
+
+## Supplemental Figure 3
+
+```{r}
+#| label: supp-fig3
+#| message: false
+#| warning: false
+#| cache: true
+
+# Apply to all sheets
+supp_fig3_res_df <- purrr::map(
+  .x = c("S. Fig 3A-B", "S. Fig 3C-D", "S. Fig 3E-F", "S. Fig 3G-H", "S. Fig 3I-J", "S. Fig 3K-L", "S. Fig 3M-N", "S. Fig 3O-P"), 
+  .f = \(x){
+    
+    fig3_stats_fun("data/Master Data final 08032026.xlsx",
+                    sheet_name = x)
+    
+  }
+) |> 
+  purrr::list_rbind()
+
+supp_fig3_res_df
+
+# make all plots
+purrr::map(
+  .x = c("S. Fig 3A-B", "S. Fig 3C-D", "S. Fig 3E-F", "S. Fig 3G-H", "S. Fig 3I-J", "S. Fig 3K-L", "S. Fig 3M-N", "S. Fig 3O-P"), 
+  .f = \(x){
+    
+    fig3_plots_fun("data/Master Data final 08032026.xlsx",
+                    sheet_name = x)
+    
+  }
+)
+
+# save plots as individual figures
+# purrr::map(
+#   .x = c("S. Fig 3A-B", "S. Fig 3C-D", "S. Fig 3E-F", "S. Fig 3G-H", "S. Fig 3I-J", "S. Fig 3K-L", "S. Fig 3M-N", "S. Fig 3O-P"),
+#   .f = \(x){
+# 
+#     plot <- fig3_plots_fun("data/Master Data final 08032026.xlsx",
+#                             sheet_name = x) +
+#               labs(title = "")
+# 
+#     ggsave(paste0("figures/Supp Figure 3/",
+#                   "S. Fig 3",
+#                   str_extract(x, "(?<=\\-)."),
+#                   ".tiff"),
+#            plot,
+#            height = 5,
+#            width = 3)
+# 
+#   }
+# )
+```
+
+## Supplemental Figure 4
+
+```{r}
+#| label: supp-fig4
+#| message: false
+#| warning: false
+#| cache: true
+
+# test
+# fig3_stats_fun(
+#   "data/Master Data final 08032026.xlsx",
+#   sheet_name = "S. Fig 4 M-N"
+# )
+
+# Apply to all sheets
+supp_fig4_res_df <- purrr::map(
+  .x = c("S. Fig 4A-B", "S. Fig 4C-D", "S. Fig 4G-H", "S. Fig 4I-J", "S. Fig 4K-L", "S. Fig 4 M-N", "S. Figure 4O-P", "S. Figure 4Q-R"), 
+  .f = \(x){
+    
+    fig3_stats_fun("data/Master Data final 08032026.xlsx",
+                    sheet_name = x)
+    
+  }
+) |> 
+  purrr::list_rbind()
+
+supp_fig4_res_df
+
+# plots
+
+# test
+# fig3_plots_fun(
+#   "data/Master Data final 08032026.xlsx",
+#   sheet_name = "S. Fig 4 M-N"
+# )
+
+# make all plots
+purrr::map(
+  .x = c("S. Fig 4A-B", "S. Fig 4C-D", "S. Fig 4G-H", "S. Fig 4I-J", "S. Fig 4K-L", "S. Fig 4 M-N", "S. Figure 4O-P", "S. Figure 4Q-R"),
+  .f = \(x){
+
+    fig3_plots_fun("data/Master Data final 08032026.xlsx",
+                    sheet_name = x)
+
+  }
+)
+
+# save plots as individual figures
+# purrr::map(
+#   .x = c("S. Fig 4A-B", "S. Fig 4C-D", "S. Fig 4G-H", "S. Fig 4I-J", "S. Fig 4K-L", "S. Fig 4 M-N", "S. Figure 4O-P", "S. Figure 4Q-R"),
+#   .f = \(x){
+# 
+#     plot <- fig3_plots_fun("data/Master Data final 08032026.xlsx",
+#                             sheet_name = x) +
+#               labs(title = "")
+# 
+#     ggsave(paste0("figures/Supp Figure 4/",
+#                   "S. Fig 4",
+#                   str_extract(x, "(?<=\\-)."),
+#                   ".tiff"),
+#            plot,
+#            height = 5,
+#            width = 3)
+# 
+#   }
+# )
+```
+
+## Figure 4
+
+Only considering "End of FI" comparisons between AL and FI for Male and Female rats.
+
+The tables below show the results of these comparisons. Also shown are the corresponding volcano plots.
+
+```{r}
+#| label: fig4
+#| message: false
+#| warning: false
+#| cache: true
+
+fig_4a <- read_excel("data/Master Data final 08032026.xlsx", 
+    sheet = "Fig 4A", skip = 3) |> 
+    dplyr::select(Group, `Animal ID`, `TG...14`:`Ghrelin...23`) |> 
+    dplyr::rename_with(
+      .cols = matches("\\d$"),
+      .fn = ~str_extract(.x, "[^\\.]+")
+    ) |> 
+  tidyr::drop_na()
+
+fig_4b <- read_excel("data/Master Data final 08032026.xlsx", 
+    sheet = "Fig 4B", skip = 2) |> 
+    dplyr::select(Group, `Animal ID`, `C3...22`:`C20:4...39`) |> 
+    dplyr::rename_with(
+      .cols = matches("\\d$"),
+      .fn = ~str_extract(.x, "[^\\.]+")
+    ) |> 
+  tidyr::drop_na()
+
+sfig_5a <- read_excel("data/Master Data final 08032026.xlsx", 
+    sheet = "S. Figure  5A", skip = 2) |> 
+  dplyr::select(Group, `Animal ID`, `Gly...15`:`Arg...25`) |> 
+    dplyr::rename_with(
+      .cols = matches("\\d$"),
+      .fn = ~str_extract(.x, "[^\\.]+")
+    ) |> 
+  tidyr::drop_na()
+  
+sfig_5b <- read_excel("data/Master Data final 08032026.xlsx", 
+    sheet = "S. Figure 5B", skip = 2) |> 
+  dplyr::select(Group, `Animal ID`, `KIV...7`:`KMV...9`) |> 
+    dplyr::rename_with(
+      .cols = matches("\\d$"),
+      .fn = ~str_extract(.x, "[^\\.]+")
+    ) |> 
+  tidyr::drop_na()
+  
+sfig_5c <- read_excel("data/Master Data final 08032026.xlsx", 
+    sheet = "S. Figure 5C", skip = 2) |> 
+  dplyr::select(Group, `Animal ID`, `3-HIB...6`:`2-HB...7`) |> 
+    dplyr::rename_with(
+      .cols = matches("\\d$"),
+      .fn = ~str_extract(.x, "[^\\.]+")
+    ) |> 
+  tidyr::drop_na()
+  
+sfig_5d <- read_excel("data/Master Data final 08032026.xlsx", 
+    sheet = "S. Figure 5D", skip = 2) |> 
+  dplyr::select(Group, `Animal ID`, `C2...5`) |> 
+    dplyr::rename_with(
+      .cols = matches("\\d$"),
+      .fn = ~str_extract(.x, "[^\\.]+")
+    ) |> 
+  tidyr::drop_na()
+  
+# combine 
+fig_4_endoffidf <- fig_4a |> 
+  dplyr::left_join(
+    fig_4b,
+    join_by(Group, `Animal ID`)
+  ) |> 
+  dplyr::left_join(
+    sfig_5a,
+    join_by(Group, `Animal ID`)
+  ) |> 
+  dplyr::left_join(
+    sfig_5b,
+    join_by(Group, `Animal ID`)
+  ) |> 
+  dplyr::left_join(
+    sfig_5c,
+    join_by(Group, `Animal ID`)
+  ) |> 
+  dplyr::left_join(
+    sfig_5d,
+    join_by(Group, `Animal ID`)
+  ) 
+
+# reshape, remove metabolites with > 25% 0 values, and for 
+# any metabolites with at least one 0 value, add one-half the minimum observed value for that variable JUST to the 0 values
+# log2 transform
+fig_4_limma <- fig_4_endoffidf |> 
+  dplyr::select(-Group) |> 
+  tidyr::pivot_longer(
+    cols = -`Animal ID`,
+    names_to = "metabolite",
+    values_to = "abundance"
+  ) |> 
+  tidyr::pivot_wider(
+    names_from = `Animal ID`,
+    values_from = abundance
+  ) |> # 45 metabolites
+  dplyr::distinct() |> # 45 metabolites (checking for duplicates)
+  dplyr::rowwise() |>
+  dplyr::mutate(prop_zeroes = sum(c_across(-metabolite) == 0)/length(c_across(-metabolite))*100) |>
+  dplyr::ungroup() |>
+  dplyr::filter(prop_zeroes < 25) |> 
+  dplyr::select(-prop_zeroes) |> 
+  tidyr::pivot_longer(
+    cols = -metabolite,
+    names_to = "subject",
+    values_to = "abundance"
+  ) |> 
+  tidyr::pivot_wider(
+    names_from = metabolite,
+    values_from = abundance
+  ) |> 
+  dplyr::mutate(across(
+    .cols = !c(subject, where(~sum(.x == 0, na.rm = TRUE) == 0)), 
+    .fns = ~if_else(.x == 0,
+                    .x + 0.5*min(.x[.x > 0], na.rm = TRUE),
+                    .x)
+    )) |>
+  dplyr::mutate(across(!subject, ~log2(.x))) |> # log2 transform
+  tidyr::pivot_longer(
+    cols = -subject,
+    names_to = "metabolite",
+    values_to = "log_abundance"
+  ) |> 
+  tidyr::pivot_wider(
+    names_from = subject,
+    values_from = log_abundance
+  ) 
+
+fig4_limma_mat <- fig_4_limma |> 
+                    dplyr::select(-metabolite) |> 
+                    as.matrix()
+rownames(fig4_limma_mat) <- fig_4_limma$metabolite
+
+# make metadata
+fig4_meta <- tibble::tibble(
+  
+  id = colnames(fig4_limma_mat),
+  treatment_sex = c(rep("AL_M", 6), rep("FI_M", 6), rep("AL_F", 6), rep("FI_F", 6))
+  
+)
+
+# confirm identical order
+# identical(colnames(fig4_limma_mat), fig4_meta$id) # TRUE
+
+# make design matrix
+fig4_design <- model.matrix(~ 0 + treatment_sex, fig4_meta)
+
+# compute array weights
+fig4_w <- arrayWeights(fig4_limma_mat, fig4_design)
+
+# first fit
+fig4_fit <- lmFit(fig4_limma_mat, fig4_design, weights = fig4_w)
+  
+# make contrast  matrix 
+fig4_cont.mat <- limma::makeContrasts(
+  m_FI_v_AL = treatment_sexFI_M - treatment_sexAL_M,
+  f_FI_v_AL = treatment_sexFI_F - treatment_sexAL_F,
+  levels = fig4_design
+)
+
+# fit contrasts
+fig4_fit.cont <- limma::contrasts.fit(
+  fig4_fit,
+  fig4_cont.mat
+)
+
+# robust eBayes step
+fig4_efit <- eBayes(fig4_fit.cont, robust = TRUE)
+
+# present results
+topTable(fig4_efit, coef = "m_FI_v_AL", number = Inf) |> 
+  tibble::rownames_to_column("metabolite") |>
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) |> 
+  dplyr::mutate(
+    across(
+      .cols = where(is.numeric),
+      .fns = ~round(.x, 3)
+    )
+  ) |> 
+  DT::datatable(
+    caption = "FI vs AL - Male (End of FI)"
+  )
+
+topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf) |> 
+  tibble::rownames_to_column("metabolite") |>
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) |> 
+  dplyr::mutate(
+    across(
+      .cols = where(is.numeric),
+      .fns = ~round(.x, 3)
+    )
+  ) |> 
+  DT::datatable(
+    caption = "FI vs AL - Female (End of FI)"
+  )
+
+# Volcano plots
+# NOTE - I am using the magrittr pipe here because the native pipe does not allow me to use `.` within a geom!
+set.seed(42) # for geom_jitter
+fig4_m_FI_v_AL <- topTable(fig4_efit, coef = "m_FI_v_AL", number = Inf) %>%
+  tibble::rownames_to_column("metabolite") %>%
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>% 
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>% 
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>% 
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>% 
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>%
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "bold",
+                  size = 5) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism() +
+  labs(title = "FI vs AL (Male)",
+       subtitle = "End of FI",
+       y = "-log10(adjusted p-value)")
+
+fig4_f_FI_v_AL <- topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf) %>%
+  tibble::rownames_to_column("metabolite") %>%
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>% 
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>%
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>%
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>% 
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>%
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "bold",
+                  size = 5) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism() +
+  labs(title = "FI vs AL (Female)",
+       subtitle = "End of FI",
+       y = "-log10(adjusted p-value)")
+
+fig4_m_FI_v_AL
+fig4_f_FI_v_AL
+
+# save plots
+# ggsave("figures/Figure 4/fig4_male_FI_vs_AL.tiff",
+#        fig4_m_FI_v_AL)
+# ggsave("figures/Figure 4/fig4_female_FI_vs_AL.tiff",
+#        fig4_f_FI_v_AL)
+
+# save tables
+fig4_results <- list(
+  "Figure 4B" = topTable(fig4_efit, coef = "m_FI_v_AL", number = Inf) %>%
+  tibble::rownames_to_column("metabolite"),
+  "Figure 4C" = topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf) %>%
+  tibble::rownames_to_column("metabolite")
+)
+
+# write.xlsx(fig4_results,
+#            "tables/Figure 4/supplementary_table_figure_4.xlsx")
+```
+
+## Figure 5
+
+The tables below show the comparisons for FI vs AL for the male and female subgroups. Also shown are Male vs Female comparisons, averaged across treatment groups.
+
+Also shown are volcano plots for these three comparisons.
+
+```{r}
+#| label: fig5
+#| message: false
+#| warning: false
+#| cache: true
+
+# import data
+# fig 5
+fig_5a <- read_excel("data/Master Data final 08032026.xlsx", 
+                      sheet = "Fig 5A", skip = 2) |> 
+              dplyr::rename(
+                metabolite = 1
+              ) |> 
+            tidyr::drop_na()
+
+sfig_6b <- read_excel("data/Master Data final 08032026.xlsx",
+                      sheet = "S. Figure 6B", skip = 2) |>
+              dplyr::rename(
+                metabolite = 1
+              ) |>
+            tidyr::drop_na()
+
+sfig_6c <- read_excel("data/Master Data final 08032026.xlsx",
+                      sheet = "S. Figure 6C", skip = 2) |>
+              dplyr::rename(
+                metabolite = 1
+              ) |>
+            tidyr::drop_na()
+
+sfig_6d <- read_excel("data/Master Data final 08032026.xlsx",
+                      sheet = "S. Figure 6D", skip = 2) |>
+              dplyr::rename(
+                metabolite = 1
+              ) |>
+            tidyr::drop_na()
+
+sfig_6e <- read_excel("data/Master Data final 08032026.xlsx",
+                      sheet = "S. Figure 6E", skip = 2) |>
+              dplyr::rename(
+                metabolite = 1
+              ) |>
+            tidyr::drop_na()
+
+# combine
+fig_5 <- dplyr::bind_rows(
+            fig_5a,
+            sfig_6b,
+            sfig_6c,
+            sfig_6d,
+            sfig_6e
+)
+
+# note - there is one duplicate metabolite!
+# fig_5 |>
+#   dplyr::count(metabolite, sort = TRUE)
+# ornithine
+
+# remove duplicate, reshape, remove metabolites with > 25% 0 values, and for 
+# any metabolites with at least one 0 value, add one-half the minimum observed value for that variable JUST to the 0 values
+# log2 transform
+fig_5_limma <- fig_5 |> 
+  dplyr::distinct() |> 
+  dplyr::rowwise() |>
+  dplyr::mutate(prop_zeroes = sum(c_across(-metabolite) == 0)/length(c_across(-metabolite))*100) |>
+  dplyr::ungroup() |>
+  dplyr::filter(prop_zeroes < 25) |> # this removes two metabolites
+  dplyr::select(-prop_zeroes) |> 
+  tidyr::pivot_longer(
+    cols = -metabolite,
+    names_to = "subject",
+    values_to = "abundance"
+  ) |> 
+  tidyr::pivot_wider(
+    names_from = metabolite,
+    values_from = abundance
+  ) |> 
+  dplyr::mutate(across(
+    .cols = !c(subject, where(~sum(.x == 0, na.rm = TRUE) == 0)), 
+    .fns = ~if_else(.x == 0,
+                    .x + 0.5*min(.x[.x > 0], na.rm = TRUE),
+                    .x)
+    )) |>
+  dplyr::mutate(across(!subject, ~log2(.x))) |> # log2 transform
+  tidyr::pivot_longer(
+    cols = -subject,
+    names_to = "metabolite",
+    values_to = "log_abundance"
+  ) |> 
+  tidyr::pivot_wider(
+    names_from = subject,
+    values_from = log_abundance
+  ) 
+
+fig5_limma_mat <- fig_5_limma |> 
+                    dplyr::select(-metabolite) |> 
+                    as.matrix()
+rownames(fig5_limma_mat) <- fig_5_limma$metabolite
+
+# make metadata
+fig5_meta <- tibble::tibble(
+  
+  id = colnames(fig5_limma_mat),
+  treatment_sex = c(rep("AL_M", 6), rep("FI_M", 6), rep("AL_F", 6), rep("FI_F", 6))
+)
+
+# confirm identical order
+# identical(colnames(fig5_limma_mat), fig5_meta$id) # TRUE
+
+# make design matrix
+fig5_design <- model.matrix(~ 0 + treatment_sex, fig5_meta)
+
+# compute array weights
+fig5_w <- arrayWeights(fig5_limma_mat, fig5_design)
+
+# first fit
+fig5_fit <- lmFit(fig5_limma_mat, fig5_design, weights = fig5_w)
+  
+# make contrast  matrix 
+fig5_cont.mat <- limma::makeContrasts(
+  m_FI_v_AL = treatment_sexFI_M - treatment_sexAL_M,
+  f_FI_v_AL = treatment_sexFI_F - treatment_sexAL_F,
+  m_v_f = (treatment_sexFI_M + treatment_sexAL_M)/2 - (treatment_sexFI_F + treatment_sexAL_F)/2,
+  levels = fig5_design
+)
+
+# fit contrasts
+fig5_fit.cont <- limma::contrasts.fit(
+  fig5_fit,
+  fig5_cont.mat
+)
+
+# robust eBayes step
+fig5_efit <- eBayes(fig5_fit.cont, robust = TRUE)
+
+# present results
+topTable(fig5_efit, coef = "m_FI_v_AL", number = Inf) |> 
+  tibble::rownames_to_column("metabolite") |>
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) |> 
+  dplyr::mutate(
+    across(
+      .cols = where(is.numeric),
+      .fns = ~round(.x, 3)
+    )
+  ) |> 
+  DT::datatable(
+    caption = "FI vs AL - Male"
+  )
+
+topTable(fig5_efit, coef = "f_FI_v_AL", number = Inf) |> 
+  tibble::rownames_to_column("metabolite") |>
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) |> 
+  dplyr::mutate(
+    across(
+      .cols = where(is.numeric),
+      .fns = ~round(.x, 3)
+    )
+  ) |> 
+  DT::datatable(
+    caption = "FI vs AL - Female"
+  )
+
+topTable(fig5_efit, coef = "m_v_f", number = Inf) |> 
+  tibble::rownames_to_column("metabolite") |>
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) |> 
+  dplyr::mutate(
+    across(
+      .cols = where(is.numeric),
+      .fns = ~round(.x, 3)
+    )
+  ) |> 
+  DT::datatable(
+    caption = "Male vs Female"
+  )
+
+# Volcano plots
+set.seed(42) # for geom_jitter
+fig5_m_FI_v_AL <- topTable(fig5_efit, coef = "m_FI_v_AL", number = Inf) %>% 
+  tibble::rownames_to_column("metabolite") %>% 
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>%  
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>%  
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>%  
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "bold",
+                  size = 5) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism() +
+  labs(title = "FI vs AL (Male)",
+       y = "-log10(adjusted p-value)")
+
+fig5_f_FI_v_AL <- topTable(fig5_efit, coef = "f_FI_v_AL", number = Inf) %>% 
+  tibble::rownames_to_column("metabolite") %>% 
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>%  
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>%  
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>%  
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "bold",
+                  size = 5) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism() +
+  labs(title = "FI vs AL (Female)",
+       y = "-log10(adjusted p-value)")
+
+fig5_m_v_f <-topTable(fig5_efit, coef = "m_v_f", number = Inf) %>%  
+  tibble::rownames_to_column("metabolite") %>% 
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>%  
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>%  
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>% 
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "bold",
+                  size = 5) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism() +
+  labs(title = "Male vs Female",
+       subtitle = "Averaged across treatment groups",
+       y = "-log10(adjusted p-value)")
+
+fig5_m_FI_v_AL
+fig5_f_FI_v_AL
+fig5_m_v_f
+
+# save plots
+# ggsave("figures/Figure 5/fig5_male_FI_v_AL.tiff",
+#        fig5_m_FI_v_AL)
+# ggsave("figures/Figure 5/fig5_female_FI_v_AL.tiff",
+#        fig5_f_FI_v_AL)
+# ggsave("figures/Figure 5/fig5_male_v_female.tiff",
+#        fig5_m_v_f)
+
+# save tables
+fig5_results <- list(
+  "Figure 5B" = topTable(fig5_efit, coef = "m_FI_v_AL", number = Inf) %>% 
+  tibble::rownames_to_column("metabolite"),
+  "Figure 5C" = topTable(fig5_efit, coef = "f_FI_v_AL", number = Inf) %>% 
+  tibble::rownames_to_column("metabolite"),
+  "Figure 5D" = topTable(fig5_efit, coef = "m_v_f", number = Inf) %>%  
+  tibble::rownames_to_column("metabolite")
+)
+
+# write.xlsx(fig5_results,
+#            "tables/Figure 5/supplementary_table_figure_5.xlsx")
+```
+
+<!-- ## Resubmission Material -->
+
+<!-- ```{r} -->
+<!-- #| label: resub -->
+<!-- #| message: false -->
+<!-- #| warning: false -->
+<!-- #| cache: true -->
+
+<!-- ## Box-and-violin plots -->
+<!-- # function that performs t-test and produces p-value and figure name -->
+<!-- resub_stats_fun <- function(path, -->
+<!--          sheet_name){ -->
+
+<!--   df <- read_excel(path = path,  -->
+<!--                  sheet = sheet_name, skip = 1) |>  -->
+<!--   janitor::clean_names() |>  -->
+<!--   dplyr::select(-ends_with("hr")) -->
+
+<!--   # compute means -->
+<!--   df_means <- df |>  -->
+<!--     dplyr::summarise( -->
+<!--       across( -->
+<!--         .cols = matches("\\d$"), -->
+<!--         .fns = list(mean = ~mean(.x, na.rm = TRUE)), -->
+<!--         .names = "{.fn}_{.col}" -->
+<!--       ) -->
+<!--     ) |>  -->
+<!--     tidyr::pivot_longer( -->
+<!--       cols = everything(), -->
+<!--       names_to = c("group", "sex", "diet", "id"), -->
+<!--       names_pattern = "mean_(.+)_(.)_(.+)_(\\d+)", -->
+<!--       values_to = "val" -->
+<!--     ) -->
+
+<!--   # stats test -->
+<!--   p_val <- t.test( -->
+<!--     df_means |> -->
+<!--       dplyr::filter(group == "al") |> -->
+<!--       dplyr::pull(val), -->
+<!--     df_means |> -->
+<!--       dplyr::filter(group == "fi") |> -->
+<!--       dplyr::pull(val) -->
+<!--   )$p.value -->
+
+<!--   # return result -->
+<!--   res_df <- tibble::tibble( -->
+<!--     figure = {{ sheet_name }}, -->
+<!--     p_value = p_val -->
+<!--   ) -->
+
+<!--   return(res_df) -->
+
+<!-- } -->
+
+<!-- # test -->
+<!-- # resub_stats_fun( -->
+<!-- #   "data/HFHS Energy balance data 07312026.xlsx", -->
+<!-- #   sheet_name = "Males" -->
+<!-- # ) -->
+
+<!-- # Apply to all sheets -->
+<!-- resub_res_df <- purrr::map( -->
+<!--   .x = c("Males", "Females"),  -->
+<!--   .f = \(x){ -->
+
+<!--     resub_stats_fun("data/HFHS Energy balance data 07312026.xlsx", -->
+<!--                     sheet_name = x) -->
+
+<!--   } -->
+<!-- ) |>  -->
+<!--   purrr::list_rbind() -->
+
+<!-- resub_res_df -->
+
+<!-- # plots -->
+<!-- # function for making box/violin plots with stats info -->
+<!-- resub_plots_fun <- function(path, -->
+<!--                                sheet_name){ -->
+
+<!--   df <- read_excel(path = path,  -->
+<!--                  sheet = sheet_name, skip = 1) |>  -->
+<!--   janitor::clean_names() |>  -->
+<!--   dplyr::select(-ends_with("hr")) -->
+
+<!--   # compute means -->
+<!--   df_means <- df |>  -->
+<!--     dplyr::summarise( -->
+<!--       across( -->
+<!--         .cols = matches("\\d$"), -->
+<!--         .fns = list(mean = ~mean(.x, na.rm = TRUE)), -->
+<!--         .names = "{.fn}_{.col}" -->
+<!--       ) -->
+<!--     ) |>  -->
+<!--     tidyr::pivot_longer( -->
+<!--       cols = everything(), -->
+<!--       names_to = c("group", "sex", "diet", "id"), -->
+<!--       names_pattern = "mean_(.+)_(.)_(.+)_(\\d+)", -->
+<!--       values_to = "val" -->
+<!--     ) -->
+
+<!--   # get y-axis title -->
+<!--   column_names <- read_excel(path,  -->
+<!--                              sheet = sheet_name, skip = 1) |>  -->
+<!--     colnames() -->
+
+<!--   y_axis_title <- column_names[1] -->
+
+<!--   # get Male/Female info -->
+<!--   mf_info <- read_excel(path,  -->
+<!--                         sheet = sheet_name, skip = 1) |>  -->
+<!--     janitor::clean_names() |>  -->
+<!--     janitor::clean_names() |>  -->
+<!--     dplyr::select(-ends_with("hr")) |>  -->
+<!--     dplyr::select(last_col()) |>  -->
+<!--     dplyr::rename_with( -->
+<!--       .fn = ~str_extract(.x, "(?<=\\w_).(?=_\\w)") -->
+<!--     ) |>  -->
+<!--     colnames() -->
+<!--   mf_info <- str_to_upper(mf_info) -->
+
+<!--   # plot -->
+<!--   df_means |>  -->
+<!--     ggplot(aes(group, val)) + -->
+<!--     geom_violin(width = 0.5, -->
+<!--                 linewidth = 1.5) + -->
+<!--     geom_boxplot(width = 0.15,  -->
+<!--                  alpha=0.2, -->
+<!--                  linewidth = 1.5) + -->
+<!--     theme_prism() + -->
+<!--     labs(title = {{ sheet_name }}, -->
+<!--          y = y_axis_title, -->
+<!--          x = "") + -->
+<!--     scale_x_discrete(labels =  -->
+<!--                        c(paste0("AL ", mf_info), -->
+<!--                          paste0("FI ", mf_info)) -->
+<!--     ) + -->
+<!--     theme(axis.text = element_text(face = "bold", -->
+<!--                                    size = 20), -->
+<!--           axis.title = element_text(size = 25), -->
+<!--           axis.title.y = element_text(size = 10, -->
+<!--                                       vjust = 5)) -->
+
+<!-- } -->
+
+<!-- # test -->
+<!-- # resub_plots_fun( -->
+<!-- #   "data/HFHS Energy balance data 07312026.xlsx", -->
+<!-- #   sheet_name = "Males" -->
+<!-- # ) -->
+
+<!-- # make all plots -->
+<!-- purrr::map( -->
+<!--   .x = c("Males", "Females"), -->
+<!--   .f = \(x){ -->
+
+<!--     resub_plots_fun("data/HFHS Energy balance data 07312026.xlsx", -->
+<!--                     sheet_name = x) -->
+
+<!--   } -->
+<!-- ) -->
+
+<!-- # save plots as individual figures -->
+<!-- # purrr::map( -->
+<!-- #   .x = c("Males", "Females"), -->
+<!-- #   .f = \(x){ -->
+<!-- #  -->
+<!-- #     plot <- resub_plots_fun("data/HFHS Energy balance data 07312026.xlsx", -->
+<!-- #                             sheet_name = x) + -->
+<!-- #               labs(title = "") -->
+<!-- #  -->
+<!-- #     ggsave(paste0("figures/Resubmission/", -->
+<!-- #                   x, -->
+<!-- #                   ".tiff"), -->
+<!-- #            plot, -->
+<!-- #            height = 5, -->
+<!-- #            width = 3 -->
+<!-- #            ) -->
+<!-- #  -->
+<!-- #   } -->
+<!-- # ) -->
+<!-- ``` -->
+
