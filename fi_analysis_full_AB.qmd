@@ -37,6 +37,9 @@ library(ggprism)
 library(performance)
 library(gtsummary)
 library(openxlsx)
+library(extrafont)
+font_import()
+fonts()
 ```
 
 ::: callout-note
@@ -520,6 +523,116 @@ purrr::map(
 
 ```
 
+### Figure 3 final submission
+
+```{r}
+#| label: fig3-finalsub
+#| message: false
+#| warning: false
+#| cache: true
+
+# update plot function to change font
+fig3_plots_fun_finalsub <- function(path,
+                               sheet_name){
+  
+  df <- read_excel(path, 
+                   sheet = sheet_name, skip = 2) |> 
+    janitor::clean_names() |> 
+    dplyr::select(hour:starts_with("x")) |> 
+    dplyr::select(-starts_with("x"))
+  
+  # compute means
+  df_means <- df |> 
+    dplyr::summarise(
+      across(
+        .cols = matches("\\d$"),
+        .fns = list(mean = ~mean(.x, na.rm = TRUE)),
+        .names = "{.fn}_{.col}"
+      )
+    ) |> 
+    tidyr::pivot_longer(
+      cols = everything(),
+      names_to = c("group", "sex", "diet", "id"),
+      names_pattern = "mean_(.+)_(.)_(.+)_(\\d+)",
+      values_to = "val"
+    )
+  
+  # get y-axis title
+  column_names <- read_excel(path, 
+                             sheet = sheet_name, skip = 1) |> 
+                      colnames()
+  
+  y_axis_title <- column_names[1]
+  
+  # get Male/Female info
+  mf_info <- read_excel(path, 
+                        sheet = sheet_name, skip = 2) |> 
+    janitor::clean_names() |> 
+    dplyr::select(hour:starts_with("x")) |> 
+    dplyr::select(-starts_with("x")) |> 
+    dplyr::select(last_col()) |> 
+    dplyr::rename_with(
+      .fn = ~str_extract(.x, "(?<=\\w_).(?=_\\w)")
+    ) |> 
+    colnames()
+  mf_info <- str_to_upper(mf_info)
+  
+  # plot
+  df_means |> 
+    ggplot(aes(group, val)) +
+    geom_violin(width = 0.5,
+                linewidth = 1.5) +
+    geom_boxplot(width = 0.15, 
+                 alpha=0.2,
+                 linewidth = 1.5) +
+    theme_prism(base_size = 8) +
+    labs(title = {{ sheet_name }},
+         y = y_axis_title,
+         x = "") +
+    scale_x_discrete(labels = 
+                       c(paste0("AL ", mf_info),
+                         paste0("FI ", mf_info))
+                     ) +
+    theme(axis.text = element_text(face = "plain",
+
+                                   family = "Arial"),
+          axis.title = element_text(
+                                    family = "Arial"),
+          axis.title.y = element_text(
+                                      vjust = 5,
+                                      family = "Arial"))
+  
+}
+
+# test
+fig3_plots_fun_finalsub(
+  "data/Master Data final 08032026.xlsx",
+  sheet_name = "Fig 3C-D"
+)
+
+# save plots as individual figures
+# purrr::map(
+#   .x = c("Fig 3A-B", "Fig 3C-D"),
+#   .f = \(x){
+# 
+#     plot <- fig3_plots_fun_finalsub("data/Master Data final 08032026.xlsx",
+#                             sheet_name = x) +
+#               labs(title = "")
+# 
+#     ggsave(paste0("figures/Figure 3/",
+#                   "Fig 3",
+#                   str_extract(x, "(?<=\\-)."),
+#                   ".tiff"),
+#            plot,
+#            height = 5,
+#            width = 3,
+#            dpi = 350
+#            )
+# 
+#   }
+# )
+```
+
 ## Supplemental Figure 3
 
 ```{r}
@@ -847,7 +960,7 @@ topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf) |>
 
 # Volcano plots
 # NOTE - I am using the magrittr pipe here because the native pipe does not allow me to use `.` within a geom!
-set.seed(42) # for geom_jitter
+set.seed(42) # for geom_text_repel
 fig4_m_FI_v_AL <- topTable(fig4_efit, coef = "m_FI_v_AL", number = Inf) %>%
   tibble::rownames_to_column("metabolite") %>%
   dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>% 
@@ -929,6 +1042,92 @@ fig4_results <- list(
 
 # write.xlsx(fig4_results,
 #            "tables/Figure 4/supplementary_table_figure_4.xlsx")
+```
+
+### Figure 4 final submission
+
+```{r}
+#| label: fig4-finalsub
+#| message: false
+#| warning: false
+#| cache: true
+
+# Updated Volcano plots
+# NOTE - I am using the magrittr pipe here because the native pipe does not allow me to use `.` within a geom!
+set.seed(42) # for geom_text_repel
+fig4_m_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "m_FI_v_AL", number = Inf) %>%
+  tibble::rownames_to_column("metabolite") %>%
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>% 
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>% 
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>% 
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>% 
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>%
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "plain") +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism(base_size = 8) +
+  labs(title = "FI vs AL (Male)",
+       subtitle = "End of FI",
+       y = "-log10(adjusted p-value)") +
+  theme(text = element_text(family = "Arial"))
+
+fig4_f_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf) %>%
+  tibble::rownames_to_column("metabolite") %>%
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>% 
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>%
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>%
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>% 
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>%
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "plain") +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism(base_size = 8) +
+  labs(title = "FI vs AL (Female)",
+       subtitle = "End of FI",
+       y = "-log10(adjusted p-value)") +
+  theme(text = element_text(family = "Arial"))
+
+fig4_m_FI_v_AL_finalsub
+fig4_f_FI_v_AL_finalsub
+
+# save plots
+# ggsave("figures/Figure 4/fig4_male_FI_vs_AL.tiff",
+#        fig4_m_FI_v_AL_finalsub,
+#        dpi = 350)
+# ggsave("figures/Figure 4/fig4_female_FI_vs_AL.tiff",
+#        fig4_f_FI_v_AL_finalsub,
+#        dpi = 350)
+
 ```
 
 ## Figure 5
@@ -1112,7 +1311,7 @@ topTable(fig5_efit, coef = "m_v_f", number = Inf) |>
   )
 
 # Volcano plots
-set.seed(42) # for geom_jitter
+set.seed(42) # for geom_text_repel
 fig5_m_FI_v_AL <- topTable(fig5_efit, coef = "m_FI_v_AL", number = Inf) %>% 
   tibble::rownames_to_column("metabolite") %>% 
   dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>%  
@@ -1228,6 +1427,124 @@ fig5_results <- list(
 
 # write.xlsx(fig5_results,
 #            "tables/Figure 5/supplementary_table_figure_5.xlsx")
+```
+
+### Figure 5 final submission
+
+```{r}
+#| label: fig5-finalsub
+#| message: false
+#| warning: false
+#| cache: true
+
+# Updated Volcano plots
+set.seed(42) # for geom_text_repel
+fig5_m_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "m_FI_v_AL", number = Inf) %>% 
+  tibble::rownames_to_column("metabolite") %>% 
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>%  
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>%  
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>%  
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "plain") +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism(base_size = 8) +
+  labs(title = "FI vs AL (Male)",
+       y = "-log10(adjusted p-value)") +
+  theme(text = element_text(family = "Arial"))
+
+fig5_f_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "f_FI_v_AL", number = Inf) %>% 
+  tibble::rownames_to_column("metabolite") %>% 
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>%  
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>%  
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>%  
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "plain") +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism(base_size = 8) +
+  labs(title = "FI vs AL (Female)",
+       y = "-log10(adjusted p-value)") +
+  theme(text = element_text(family = "Arial"))
+
+fig5_m_v_f_finalsub <-topTable(fig5_efit, coef = "m_v_f", number = Inf) %>%  
+  tibble::rownames_to_column("metabolite") %>% 
+  dplyr::select(metabolite, logFC, P.Value, adj.P.Val) %>%  
+  dplyr::mutate(neg_log10_adjp = -log10(adj.P.Val)) %>%  
+  ggplot(aes(logFC, neg_log10_adjp)) +
+  geom_point() +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC < -1 & neg_log10_adjp > 1),
+             col = "blue",
+             size = 3) +
+  geom_point(data = . %>%  
+               dplyr::filter(logFC > 1 & neg_log10_adjp > 1),
+             col = "red",
+             size = 3) +
+  geom_text_repel(data = . %>% 
+                    dplyr::filter(
+                      (logFC < -1 & neg_log10_adjp > 1)|
+                        (logFC > 1 & neg_log10_adjp > 1)
+                    ),
+                  aes(label = metabolite),
+                  fontface = "plain") +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
+  geom_vline(xintercept = 1, linetype = "dotdash") +
+  geom_vline(xintercept = -1, linetype = "dotdash") +
+  theme_prism(base_size = 8) +
+  labs(title = "Male vs Female",
+       subtitle = "Averaged across treatment groups",
+       y = "-log10(adjusted p-value)") +
+  theme(text = element_text(family = "Arial"))
+
+fig5_m_FI_v_AL_finalsub
+fig5_f_FI_v_AL_finalsub
+fig5_m_v_f_finalsub
+
+# save plots
+# ggsave("figures/Figure 5/fig5_male_FI_v_AL.tiff",
+#        fig5_m_FI_v_AL_finalsub,
+#        dpi = 350)
+# ggsave("figures/Figure 5/fig5_female_FI_v_AL.tiff",
+#        fig5_f_FI_v_AL_finalsub,
+#        dpi = 350)
+# ggsave("figures/Figure 5/fig5_male_v_female.tiff",
+#        fig5_m_v_f_finalsub,
+#        dpi = 350)
+
 ```
 
 <!-- ## Resubmission Material -->
