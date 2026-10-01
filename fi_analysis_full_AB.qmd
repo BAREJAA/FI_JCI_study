@@ -1086,6 +1086,7 @@ fig4_m_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "m_FI_v_AL", number = Inf)
        subtitle = "End of FI",
        y = "-log10(adjusted p-value)") +
   theme(text = element_text(family = "Arial"),
+        axis.text = element_text(size = 12),
         axis.title = element_text(size = 14),
         plot.title = element_text(size = 14),
         plot.subtitle = element_text(size = 12))
@@ -1121,6 +1122,7 @@ fig4_f_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf)
        subtitle = "End of FI",
        y = "-log10(adjusted p-value)") +
   theme(text = element_text(family = "Arial"),
+        axis.text = element_text(size = 12),
         axis.title = element_text(size = 14),
         plot.title = element_text(size = 14),
         plot.subtitle = element_text(size = 12))
@@ -1477,6 +1479,7 @@ fig5_m_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "m_FI_v_AL", number = Inf)
   labs(title = "FI vs AL (Male)",
        y = "-log10(adjusted p-value)") +
   theme(text = element_text(family = "Arial"),
+        axis.text = element_text(size = 12),
         axis.title = element_text(size = 14),
         plot.title = element_text(size = 14),
         plot.subtitle = element_text(size = 12))
@@ -1511,6 +1514,7 @@ fig5_f_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "f_FI_v_AL", number = Inf)
   labs(title = "FI vs AL (Female)",
        y = "-log10(adjusted p-value)") +
   theme(text = element_text(family = "Arial"),
+        axis.text = element_text(size = 12),
         axis.title = element_text(size = 14),
         plot.title = element_text(size = 14),
         plot.subtitle = element_text(size = 12))
@@ -1546,6 +1550,7 @@ fig5_m_v_f_finalsub <-topTable(fig5_efit, coef = "m_v_f", number = Inf) %>%
        subtitle = "Averaged across treatment groups",
        y = "-log10(adjusted p-value)") +
   theme(text = element_text(family = "Arial"),
+        axis.text = element_text(size = 12),
         axis.title = element_text(size = 14),
         plot.title = element_text(size = 14),
         plot.subtitle = element_text(size = 12))
