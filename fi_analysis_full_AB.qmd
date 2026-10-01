@@ -39,7 +39,7 @@ library(gtsummary)
 library(openxlsx)
 library(extrafont)
 font_import()
-fonts()
+#fonts()
 ```
 
 ::: callout-note
@@ -1075,7 +1075,8 @@ fig4_m_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "m_FI_v_AL", number = Inf)
                         (logFC > 1 & neg_log10_adjp > 1)
                     ),
                   aes(label = metabolite),
-                  fontface = "plain") +
+                  fontface = "plain",
+                  size = 5) +
   geom_vline(xintercept = 0) +
   geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
   geom_vline(xintercept = 1, linetype = "dotdash") +
@@ -1084,7 +1085,10 @@ fig4_m_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "m_FI_v_AL", number = Inf)
   labs(title = "FI vs AL (Male)",
        subtitle = "End of FI",
        y = "-log10(adjusted p-value)") +
-  theme(text = element_text(family = "Arial"))
+  theme(text = element_text(family = "Arial"),
+        axis.title = element_text(size = 14),
+        plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 12))
 
 fig4_f_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf) %>%
   tibble::rownames_to_column("metabolite") %>%
@@ -1106,7 +1110,8 @@ fig4_f_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf)
                         (logFC > 1 & neg_log10_adjp > 1)
                     ),
                   aes(label = metabolite),
-                  fontface = "plain") +
+                  fontface = "plain",
+                  size = 5) +
   geom_vline(xintercept = 0) +
   geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
   geom_vline(xintercept = 1, linetype = "dotdash") +
@@ -1115,7 +1120,10 @@ fig4_f_FI_v_AL_finalsub <- topTable(fig4_efit, coef = "f_FI_v_AL", number = Inf)
   labs(title = "FI vs AL (Female)",
        subtitle = "End of FI",
        y = "-log10(adjusted p-value)") +
-  theme(text = element_text(family = "Arial"))
+  theme(text = element_text(family = "Arial"),
+        axis.title = element_text(size = 14),
+        plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 12))
 
 fig4_m_FI_v_AL_finalsub
 fig4_f_FI_v_AL_finalsub
@@ -1459,7 +1467,8 @@ fig5_m_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "m_FI_v_AL", number = Inf)
                         (logFC > 1 & neg_log10_adjp > 1)
                     ),
                   aes(label = metabolite),
-                  fontface = "plain") +
+                  fontface = "plain",
+                  size = 5) +
   geom_vline(xintercept = 0) +
   geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
   geom_vline(xintercept = 1, linetype = "dotdash") +
@@ -1467,7 +1476,10 @@ fig5_m_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "m_FI_v_AL", number = Inf)
   theme_prism(base_size = 8) +
   labs(title = "FI vs AL (Male)",
        y = "-log10(adjusted p-value)") +
-  theme(text = element_text(family = "Arial"))
+  theme(text = element_text(family = "Arial"),
+        axis.title = element_text(size = 14),
+        plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 12))
 
 fig5_f_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "f_FI_v_AL", number = Inf) %>% 
   tibble::rownames_to_column("metabolite") %>% 
@@ -1489,7 +1501,8 @@ fig5_f_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "f_FI_v_AL", number = Inf)
                         (logFC > 1 & neg_log10_adjp > 1)
                     ),
                   aes(label = metabolite),
-                  fontface = "plain") +
+                  fontface = "plain",
+                  size = 5) +
   geom_vline(xintercept = 0) +
   geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
   geom_vline(xintercept = 1, linetype = "dotdash") +
@@ -1497,7 +1510,10 @@ fig5_f_FI_v_AL_finalsub <- topTable(fig5_efit, coef = "f_FI_v_AL", number = Inf)
   theme_prism(base_size = 8) +
   labs(title = "FI vs AL (Female)",
        y = "-log10(adjusted p-value)") +
-  theme(text = element_text(family = "Arial"))
+  theme(text = element_text(family = "Arial"),
+        axis.title = element_text(size = 14),
+        plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 12))
 
 fig5_m_v_f_finalsub <-topTable(fig5_efit, coef = "m_v_f", number = Inf) %>%  
   tibble::rownames_to_column("metabolite") %>% 
@@ -1519,7 +1535,8 @@ fig5_m_v_f_finalsub <-topTable(fig5_efit, coef = "m_v_f", number = Inf) %>%
                         (logFC > 1 & neg_log10_adjp > 1)
                     ),
                   aes(label = metabolite),
-                  fontface = "plain") +
+                  fontface = "plain",
+                  size = 5) +
   geom_vline(xintercept = 0) +
   geom_hline(yintercept = -log10(0.1), linetype = "dashed") +
   geom_vline(xintercept = 1, linetype = "dotdash") +
@@ -1528,7 +1545,10 @@ fig5_m_v_f_finalsub <-topTable(fig5_efit, coef = "m_v_f", number = Inf) %>%
   labs(title = "Male vs Female",
        subtitle = "Averaged across treatment groups",
        y = "-log10(adjusted p-value)") +
-  theme(text = element_text(family = "Arial"))
+  theme(text = element_text(family = "Arial"),
+        axis.title = element_text(size = 14),
+        plot.title = element_text(size = 14),
+        plot.subtitle = element_text(size = 12))
 
 fig5_m_FI_v_AL_finalsub
 fig5_f_FI_v_AL_finalsub
